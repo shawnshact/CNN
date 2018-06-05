@@ -6,7 +6,7 @@
 
 - Navigate to installation directory in command prompt/terminal.
 
-- Type "pip install requirements.txt" to get required packages in order to run script.
+- Type "pip install -r requirements.txt" to get required packages in order to run script.
 
 - Open the script in a text editor. Change DATASET_DIR to HOME_DIR + "path/from/home/directory/desired/for/database".
 

@@ -83,7 +83,9 @@ def load_validation_names(image_dir, label_file):
     validation_data = []
     print("Loading Validation Data...")
     val_images = os.listdir(image_dir + '/images/')
-    labels = [x.split('\t')[1] for x in open(os.path.join(image_dir, os.listdir(image_dir)[1])).readlines()]
+    for element in os.listdir(image_dir):
+        if (not os.path.isdir(os.path.join(image_dir, element))):
+            labels = [x.split('\t')[1] for x in open(os.path.join(image_dir, element)).readlines()]
     for image in val_images:
         image_file = os.path.join(image_dir, 'images/', image)
         label_index = int(image[4:-5])
