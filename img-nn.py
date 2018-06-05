@@ -83,7 +83,7 @@ def load_validation_names(image_dir, label_file):
     validation_data = []
     print("Loading Validation Data...")
     val_images = os.listdir(image_dir + '/images/')
-    labels = [x.split('\t')[1] for x in open(os.path.join(image_dir, os.listdir(image_dir)[0])).readlines()]
+    labels = [x.split('\t')[1] for x in open(os.path.join(image_dir, os.listdir(image_dir)[1])).readlines()]
     for image in val_images:
         image_file = os.path.join(image_dir, 'images/', image)
         label_index = int(image[4:-5])
@@ -181,7 +181,7 @@ with tf.Session() as sess:
             batch_images = np.asarray([np.resize(mpimg.imread(i.file_path).flatten(),(IMG_SIZE, IMG_SIZE, NUM_CHANNELS)).flatten() for i in training_batch])
             print('Training Set', batch_images.shape, batch_labels.shape)
             sess.run(training_op, feed_dict={X: batch_images, y: batch_labels})
-            #plot_objects(batch_images)
+            plot_objects(batch_images)
             acc_train = accuracy.eval(feed_dict = {X: batch_images, y: batch_labels})
             acc_test = accuracy.eval(feed_dict={X: val_images, y: val_labels})
             print(i, "Train accuracy:", acc_train, "Test accuracy:", acc_test)
