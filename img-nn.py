@@ -4,109 +4,37 @@ import os
 import random
 import matplotlib
 import numpy as np
-import pandas as pd
-from scipy import ndimage
 import matplotlib.pyplot as plt
-import matplotlib.image as mpimg
 import tensorflow as tf
 import zipfile
 import requests
-import io
-from sklearn import preprocessing
 from pathlib import Path
+from tiny_imagenet import tiny_imagenet
+from tqdm import tqdm
+
 
 """ Global Constants for Image Classifier """
 
 HOME_DIR = str(Path.home()) #portable function to locate home directory on  a computer
-
-NUM_EPOCHS = 1 # number of passes through data
-BATCH_SIZE = 50 # size of processing batch
-NUM_CLASSES = 200 # number of classes in tiny imagenet data set
-NUM_IMAGES_PER_CLASS = 500 # number of images corresponding to each class
-DATASET_DIR = HOME_DIR + '/dev/datasets/' #directory of the tiny-imagenet-200 database
-TRAIN_IMG_DIR = DATASET_DIR + 'tiny-imagenet-200/train/' # directory of training images in tiny-imagenet-200 database
-VAL_IMG_DIR = DATASET_DIR + 'tiny-imagenet-200/val/' # directory of validation images in tiny-imagenet-200 database
-
-IMG_SIZE = 64 # resolution for images in database
-NUM_CHANNELS = 3 # rgb channels for each image
+NUM_EPOCHS = 3 # number of passes through data
+DATASET_DIR = os.path.join(HOME_DIR, 'dev/datasets/') #directory of the tiny-imagenet-200 database
 IMG_URL = 'http://cs231n.stanford.edu/tiny-imagenet-200.zip' # url for downloading tiny-imagenet-200
-
-""" Relevant Classes for Image Classifier """
-
-class dbMember: # class for holding image file path and corresponding classification
-    def __init__(self, file_path, classification):
-        self.file_path = file_path # file path for image
-        self.classification = classification # corresponding classification
+TRAIN_BATCH_SIZE = 50
+VAL_BATCH_SIZE = 50
 
 """ Functions for Image Classifier """
 
-def download_images(url): # function for downloading tiny-imagenet-200, should take IMG_URL as argument
-        if(os.path.isdir(TRAIN_IMG_DIR)): # if there is a location for the training directory, function is not necessary
-            print('Images already downloaded...')
-        else:
-            print('Downloading ' + url)
-            r = requests.get(url, stream = True) # returns response object from download link, setting stream = true prevents partial download
-            zip_ref = zipfile.ZipFile(io.BytesIO(r.content)) # downloads and zips file
-            zip_ref.extractall(DATASET_DIR) # extracts tiny-imagenet-200 zip file to database directory
-            print("Dowload Complete.")
-            zip_ref.close()
-
 def plot_object(data): # function that uses matplotlib to plot a single image to the screen (for data visualization)
-    np.resize(image,(IMG_SIZE, IMG_SIZE, NUM_CHANNELS))
+    np.resize(image,(img_size, img_size, num_channels))
     plt.figure(figsize=(1,1))
     plt.imshow(data, cmap=matplotlib.cm.binary, interpolation="nearest")
     plt.axis("off")
     plt.show()
 
-def load_training_names(image_dir):
-    """
-    Function that returns an array of class objects containing the image file path and classification
-    for all 100,000 images in training folder. Prevents having to work with all 100,000 images directly.
-    """
-    training_data = []
-    print("Loading Training Data...")
-    for type in os.listdir(image_dir):
-        type_images = os.listdir(image_dir + type + '/images')
-        for image in type_images:
-            image_file = os.path.join(image_dir, type + '/images/', image)
-            training_file = dbMember(image_file, type)
-            training_data.append(training_file)
-
-    return np.asarray(training_data)
-
-
-def load_validation_names(image_dir, label_file):
-    """
-    Function that returns an array of class objects containing the image file path and classification
-    for all 10,000 images in training folder. Prevents having to work with all 10,000 images directly.
-    """
-    validation_data = []
-    print("Loading Validation Data...")
-    val_images = os.listdir(image_dir + '/images/')
-    for element in os.listdir(image_dir):
-        if (not os.path.isdir(os.path.join(image_dir, element))):
-            labels = [x.split('\t')[1] for x in open(os.path.join(image_dir, element)).readlines()]
-    for image in val_images:
-        image_file = os.path.join(image_dir, 'images/', image)
-        label_index = int(image[4:-5])
-        val_member = dbMember(image_file, labels[label_index])
-        validation_data.append(val_member)
-
-    return np.asarray(validation_data)
-
-def load_batch_index(list_size, batch_size=20): # function that returns a list of random indexs from the length of the list of training objects
-    return np.random.choice(range(0,list_size), batch_size, replace=False)
-
-def load_training_batches(batch_indexes, file_list, batch_size=20): # function that returns a list of training objects at the random indexes returned by the load_batch_index function
-    return np.asarray([file_list[i] for i in batch_indexes])
-
-def get_batch_images(file_list): # function that returns batch images (as matrices) from the training objects returned by load_training_batches function
-    return np.asarray([mpimg.imread(i.file_path) for i in training_batch])
-
 def plot_objects(instances, images_per_row = 10, **options): # function that uses matplotlib to display multiple images (for data visualization)
-    size = IMG_SIZE
+    size = img_size
     images_per_row = min(len(instances), images_per_row)
-    images = [np.resize(instance,(IMG_SIZE, IMG_SIZE, NUM_CHANNELS)) for instance in instances]
+    images = [np.resize(instance,(img_size, img_size, num_channels)) for instance in instances]
     n_rows = (len(instances)-1) // images_per_row + 1
     row_images = []
     n_empty = n_rows * images_per_row - len(instances)
@@ -124,69 +52,149 @@ def plot_objects(instances, images_per_row = 10, **options): # function that use
     plt.pause(1)
     plt.close("all")
 
-def reset_graph(seed=42): #resets tensorflow graph
-    tf.reset_default_graph()
-    tf.set_random_seed(seed)
-    np.random.seed(seed)
+def weight_variable(shape):
+    initial = tf.truncated_normal(shape, stddev=0.1)
+    return tf.Variable(initial)
 
+def bias_variable(shape):
+    initial = tf.constant(0.1, shape=shape)
+    return tf.Variable(initial)
 
-height = IMG_SIZE
-width = IMG_SIZE
-channels = NUM_CHANNELS
-n_inputs = height * width * channels
-n_outputs = 20
+def conv2D(x, W):
+    return tf.nn.conv2d(x, W, strides=[1,1,1,1], padding="SAME")
 
-reset_graph()
+def max_pool_2x2(x):
+    return tf.nn.max_pool(x, ksize=[1,2,2,1], strides=[1,2,2,1], padding="SAME")
 
-X = tf.placeholder(tf.float32, shape=[None, n_inputs], name="X")
-X_reshaped = tf.reshape(X, shape=[-1, height, width, channels])
-y = tf.placeholder(tf.int32, shape=[None], name="y")
+tiny_imagenet200 = tiny_imagenet(IMG_URL, DATASET_DIR)
+tiny_imagenet200.load_training_names()
+tiny_imagenet200.load_validation_names()
 
-le = preprocessing.LabelEncoder()
-conv1 = tf.layers.conv2d(X_reshaped, filters = 32, kernel_size=[5,5], padding='SAME', activation=tf.nn.relu, name="conv1")
-pool1 = tf.layers.max_pooling2d(inputs=conv1, pool_size=[2, 2], strides=2)
-conv2 = tf.layers.conv2d(pool1, filters = 64, kernel_size=[5,5], padding='SAME', activation=tf.nn.relu, name="conv2")
-pool2 = tf.layers.max_pooling2d(inputs=conv2, pool_size=[2, 2], strides=2)
-pool2_flat = tf.reshape(pool2, [-1, 8 * 8 * 64])
-dense = tf.layers.dense(inputs=pool2_flat, units=1024, activation=tf.nn.relu)
-dropout = tf.layers.dropout(inputs=dense, rate=0.4)
-dropout_reshape = tf.reshape(dropout, [-1, 8 * 8 * 64])
-logits = tf.layers.dense(inputs=dropout_reshape, units=200, name='output')
-Y_proba = tf.nn.softmax(logits, name="Y_proba")
+num_classes = tiny_imagenet200.num_classes
+num_images = tiny_imagenet200.num_images
+num_test_images = tiny_imagenet200.num_test
+img_size = tiny_imagenet200.img_size
+num_channels = tiny_imagenet200.num_channels
+num_pool_layers = 4
+num_filters_conv1 = 32
+num_filters_conv2 = 64
+num_filters_conv3 = 128
+num_filters_conv4 = 256
+num_nodes_fc1 = 512
 
-xentropy = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=logits, labels=y)
-loss = tf.reduce_mean(xentropy)
-optimizer = tf.train.AdamOptimizer()
-training_op = optimizer.minimize(loss)
-correct = tf.nn.in_top_k(logits, y, 1)
-accuracy = tf.reduce_mean(tf.cast(correct, tf.float32))
-init = tf.global_variables_initializer()
+x = tf.placeholder(tf.float32, shape=[None, num_channels*img_size*img_size])
+y_ = tf.placeholder(tf.float32, shape=[None, num_classes])
+x_image = tf.reshape(x, [-1, img_size, img_size, num_channels])
+
+"""First Conv+Pool"""
+W_conv1 = weight_variable([5,5,num_channels,num_filters_conv1])
+b_conv1 = bias_variable([num_filters_conv1])
+
+h_conv1 = tf.nn.relu(conv2D(x_image, W_conv1)+b_conv1)
+h_pool1 = max_pool_2x2(h_conv1)
+
+"""Second Conv+Pool"""
+W_conv2 = weight_variable([5,5,num_filters_conv1,num_filters_conv2])
+b_conv2 = bias_variable([num_filters_conv2])
+
+h_conv2 = tf.nn.relu(conv2D(h_pool1, W_conv2) + b_conv2)
+h_pool2 = max_pool_2x2(h_conv2)
+
+"""Third Conv+Pool"""
+W_conv3 = weight_variable([3,3,num_filters_conv2,num_filters_conv3])
+b_conv3 = bias_variable([num_filters_conv3])
+
+h_conv3 = tf.nn.relu(conv2D(h_pool2, W_conv3) + b_conv3)
+h_pool3 = max_pool_2x2(h_conv3)
+
+"""Fourth Conv+Pool"""
+W_conv4 = weight_variable([3,3,num_filters_conv3,num_filters_conv4])
+b_conv4 = bias_variable([num_filters_conv4])
+
+h_conv4 = tf.nn.relu(conv2D(h_pool3, W_conv4) + b_conv4)
+h_pool4 = max_pool_2x2(h_conv4)
+
+"""Dense Layer"""
+flat_res_4_layer = int((img_size/pow(num_pool_layers,2))*(img_size/pow(num_pool_layers,2))*num_filters_conv4)
+
+h_pool4_flat = tf.reshape(h_pool4, [-1, flat_res_4_layer])
+
+W_fc1 = weight_variable([flat_res_4_layer, num_nodes_fc1])
+b_fc1 = bias_variable([num_nodes_fc1])
+
+h_fc1 = tf.nn.relu(tf.matmul(h_pool4_flat, W_fc1) + b_fc1)
+
+keep_prob = tf.placeholder(tf.float32)
+h_fc1_dropout = tf.nn.dropout(h_fc1, keep_prob)
+
+W_fc2 = weight_variable([num_nodes_fc1, num_classes])
+b_fc2 = bias_variable([num_classes])
+
+y_conv = tf.matmul(h_fc1_dropout, W_fc2) + b_fc2
+#y_conv = tf.Print(y_conv_out, [y_conv_out])
+
+cross_entropy = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits_v2(labels = y_, logits = y_conv))
+#cross_entropy = tf.Print(cross_entropy_out, [cross_entropy_out])
+#cross_entropy = tf.reduce_mean(-tf.reduce_sum(y_ * tf.log(y_conv + 1e-9), reduction_indices=[1]))
+train_step = tf.train.AdamOptimizer(1e-4).minimize(cross_entropy)
+correct_prediction = tf.equal(tf.argmax(y_conv, 1), tf.argmax(y_, 1))
+accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
+
 saver = tf.train.Saver()
-
-download_images(IMG_URL)
-training_files = load_training_names(TRAIN_IMG_DIR)
-class_labels_le = le.fit(np.asarray([i.classification for i in training_files]))
-val_data = pd.read_csv(VAL_IMG_DIR + 'val_annotations.txt', sep='\t', header=None, names=['File', 'Class', 'X', 'Y', 'H', 'W'])
-val_files = load_validation_names(VAL_IMG_DIR, val_data)
-val_labels = class_labels_le.transform(np.asarray([i.classification for i in val_files][0:1000]))
-val_images = np.asarray([np.resize(mpimg.imread(i.file_path).flatten(),(IMG_SIZE, IMG_SIZE, NUM_CHANNELS)).flatten() for i in val_files][0:1000])
-
+val_best_acc = 0
+val_threshold = 100
+stop_iterator = 0
+val_accumulated_accuracy = 0
+stop_training = False
+val_iterations = 0
 
 with tf.Session() as sess:
-    init.run()
-    for i in range(0, NUM_EPOCHS):
-        temp_training_files = training_files
-        while (len(temp_training_files) != 0):
-            batch_indexes = load_batch_index(len(temp_training_files))
-            training_batch = load_training_batches(batch_indexes, temp_training_files, BATCH_SIZE)
-            batch_labels = class_labels_le.transform(np.asarray([i.classification for i in training_batch]))
-            batch_images = np.asarray([np.resize(mpimg.imread(i.file_path).flatten(),(IMG_SIZE, IMG_SIZE, NUM_CHANNELS)).flatten() for i in training_batch])
-            print('Training Set', batch_images.shape, batch_labels.shape)
-            sess.run(training_op, feed_dict={X: batch_images, y: batch_labels})
-            plot_objects(batch_images)
-            acc_train = accuracy.eval(feed_dict = {X: batch_images, y: batch_labels})
-            acc_test = accuracy.eval(feed_dict={X: val_images, y: val_labels})
-            print(i, "Train accuracy:", acc_train, "Test accuracy:", acc_test)
-            save_path = saver.save(sess, "./tiny_imagenet")
-            print(len(temp_training_files))
-            temp_training_files = np.delete(temp_training_files, batch_indexes)
+    sess.run(tf.global_variables_initializer())
+
+    try:
+        saver.restore(sess, "./tmp/best/model.ckpt")
+    except:
+        pass
+
+    print("Model restored.")
+    tiny_imagenet200.shuffle_val_data()
+    for i in range(NUM_EPOCHS):
+        print("Epoch #%d" % (i))
+        tiny_imagenet200.shuffle_train_data()
+        for j in tqdm(range(int(num_images/TRAIN_BATCH_SIZE))):
+            train_batch = tiny_imagenet200.next_train_batch(VAL_BATCH_SIZE)
+
+            """
+            if j % 100 == 0 and j > 0:
+                val_batch = tiny_imagenet200.next_val_batch(VAL_BATCH_SIZE)
+                train_accuracy = accuracy.eval(feed_dict = {x: train_batch[0], y_: train_batch[1], keep_prob: 1.0})
+                val_accuracy = accuracy.eval(feed_dict = {x: val_batch[0], y_: val_batch[1], keep_prob: 1.0})
+                if (val_accuracy > val_best_acc):
+                    val_best_acc = val_accuracy
+                    stop_iterator = 0
+                    save_path = saver.save(sess, "./tmp/best/model.ckpt")
+                    print("Best model saved in path: %s" % save_path)
+
+                stop_iterator += 1
+                val_iterations += 1
+                val_accumulated_accuracy += val_accuracy
+                val_avg_accuracy = val_accumulated_accuracy/val_iterations
+
+                print("step: %d" % (j))
+                print("train accuracy: %g" % (train_accuracy))
+                print("validation average accuracy: %g" % (val_avg_accuracy))
+
+                save_path = saver.save(sess, "./tmp/model.ckpt")
+                print("Model saved in path: %s" % save_path)
+                if stop_iterator >= val_threshold:
+                    print("Model has converged. Stopping training.")
+                    stop_training = True
+
+            if (stop_training):
+                break
+            """
+                #print(tf.argmax(y_conv, 1), tf.argmax(y_, 1))
+            #train_step.run(feed_dict = {x: train_batch[0], y_: train_batch[1], keep_prob: 0.5})
+            a, b, c = sess.run([train_step, cross_entropy, accuracy], feed_dict = {x: train_batch[0], y_: train_batch[1], keep_prob: 0.5})
+            print("Cross Entropy: ", b)
+            print("Train Accuracy: ", c)
